@@ -1,0 +1,13 @@
+{
+	"name": "mirrorllm",
+	"version": "1.0.0",
+	"private": true,
+	"description": "Smart mirror agent: Python LLM backend with a MagicMirror2 front end.",
+	"scripts": {
+		"mirror": "cd MagicMirror && node ./serveronly",
+		"mirror:dev": "cd MagicMirror && npx nodemon --watch modules --watch config --ext js,css,njk --ignore config/basepath.js --exec \"node ./serveronly\"",
+		"mirror:check": "cd MagicMirror && node js/check_config.js",
+		"api": "python -m uvicorn api.main:app --port 8000",
+		"api:dev": "python -m uvicorn api.main:app --port 8000 --reload"
+	}
+}
