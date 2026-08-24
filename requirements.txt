@@ -1,0 +1,38 @@
+# mirrorLLM Python dependencies
+#
+#   python3.11 -m venv .venv
+#   source .venv/bin/activate
+#   pip install -r requirements.txt
+
+# --- API service (api/) ---
+fastapi
+uvicorn[standard]
+pydantic
+
+# --- LLM client and agent (llm/, flow/) ---
+openai
+python-dotenv
+
+# --- Web search and lookups (llm/lib/web.py) ---
+ddgs
+
+# --- Google Calendar (flow/tools/calendar.py) ---
+google-api-python-client
+google-auth
+google-auth-oauthlib
+
+# --- Speech: capture, transcription, playback (api/listen.py, speech/, flow/voice.py) ---
+SpeechRecognition
+openai-whisper
+edge-tts
+pygame
+sounddevice
+soundfile
+numpy
+
+# Microphone capture for the /voice endpoints. PyAudio builds against the
+# PortAudio C headers, so install those first or the build fails:
+#   macOS:        brew install portaudio
+#   Debian/Pi:    sudo apt install portaudio19-dev
+# Text-only use of the API works without it.
+PyAudio

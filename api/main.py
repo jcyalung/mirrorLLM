@@ -22,6 +22,7 @@ from pydantic import BaseModel, Field
 from api import listen
 from flow.agent import MirrorAgent
 from flow.schemas import MirrorAgentResponse
+from flow.tools.calendar import CalendarNotAuthorized, list_upcoming_events
 from flow.voice import speak
 from llm.lib.model import MODEL_NAME
 
@@ -97,6 +98,17 @@ def _run_turn(prompt: str, say: bool, background: BackgroundTasks) -> MirrorAgen
         background.add_task(_speak_safely, result.voice_response)
 
     return result
+
+
+@app.get("/calendar/events")
+def calendar_events():
+    """Upcoming Google Calendar events for today and the rest of this week."""
+    try:
+        return {"events": list_upcoming_events()}
+    except CalendarNotAuthorized as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"calendar failed: {exc}") from exc
 
 
 @app.get("/health")
