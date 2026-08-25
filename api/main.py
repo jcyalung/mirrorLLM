@@ -23,6 +23,11 @@ from api import listen
 from flow.agent import MirrorAgent
 from flow.schemas import MirrorAgentResponse
 from flow.tools.calendar import CalendarNotAuthorized, list_upcoming_events
+from flow.tools.spotify import (
+    SpotifyNotAuthorized,
+    SpotifyNotConfigured,
+    get_now_playing,
+)
 from flow.voice import speak
 from llm.lib.model import MODEL_NAME
 
@@ -109,6 +114,17 @@ def calendar_events():
         raise HTTPException(status_code=503, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"calendar failed: {exc}") from exc
+
+
+@app.get("/spotify/now-playing")
+def spotify_now_playing():
+    """What the user is listening to right now, if anything."""
+    try:
+        return get_now_playing()
+    except (SpotifyNotConfigured, SpotifyNotAuthorized) as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"spotify failed: {exc}") from exc
 
 
 @app.get("/health")

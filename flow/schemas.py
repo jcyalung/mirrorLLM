@@ -3,7 +3,7 @@ from typing import List, Literal, Optional
 from pydantic import BaseModel, Field
 
 CardType = Literal[
-    "recipe", "calendar", "weather", "notification", "wikipedia", "web_results"
+    "recipe", "calendar", "weather", "notification", "wikipedia", "web_results", "music"
 ]
 
 

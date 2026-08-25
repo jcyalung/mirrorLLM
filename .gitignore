@@ -5,9 +5,12 @@
 __pycache__/
 .venv*
 
+node_modules/
+
 # secrets
 google-cred.json
 token.json
+spotify-token.json
 
 # extra repos
 MagicMirror/

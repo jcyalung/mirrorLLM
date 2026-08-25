@@ -9,9 +9,25 @@ from flow.tools.notify import (
     notify_discord,
     send_email,
 )
+from flow.tools.spotify import (
+    LIST_PLAYLISTS_TOOL,
+    PLAY_SONG_TOOL,
+    SHUFFLE_PLAYLIST_TOOL,
+    list_playlists,
+    play_song,
+    shuffle_playlist,
+)
 
 # Tools the model can call while it's still working the problem.
-ACTION_TOOLS = [*_WEB_TOOLS, CALENDAR_TOOL, NOTIFY_DISCORD_TOOL, SEND_EMAIL_TOOL]
+ACTION_TOOLS = [
+    *_WEB_TOOLS,
+    CALENDAR_TOOL,
+    NOTIFY_DISCORD_TOOL,
+    SEND_EMAIL_TOOL,
+    LIST_PLAYLISTS_TOOL,
+    PLAY_SONG_TOOL,
+    SHUFFLE_PLAYLIST_TOOL,
+]
 
 # The model must call this exactly once, last, to close out a turn. Forcing
 # every reply through one schema-shaped tool call is far more reliable than
@@ -47,6 +63,7 @@ EMIT_TOOL = {
                                 "notification",
                                 "wikipedia",
                                 "web_results",
+                                "music",
                             ],
                         },
                         "title": {
@@ -87,6 +104,12 @@ def run_tool(name: str, arguments: dict) -> str:
                     arguments["subject"], arguments["body"], arguments.get("recipient")
                 )
             )
+        if name == "list_spotify_playlists":
+            return json.dumps({"playlists": list_playlists(**arguments)})
+        if name == "play_spotify_song":
+            return json.dumps(play_song(arguments["query"]))
+        if name == "shuffle_spotify_playlist":
+            return json.dumps(shuffle_playlist(arguments["name"]))
         return json.dumps({"error": f"Unknown tool: {name}"})
     except Exception as exc:
         return json.dumps({"error": str(exc)})

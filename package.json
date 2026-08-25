@@ -5,9 +5,13 @@
 	"description": "Smart mirror agent: Python LLM backend with a MagicMirror2 front end.",
 	"scripts": {
 		"mirror": "cd MagicMirror && node ./serveronly",
-		"mirror:dev": "cd MagicMirror && npx nodemon --watch modules --watch config --ext js,css,njk --ignore config/basepath.js --exec \"node ./serveronly\"",
+		"mirror:dev": "concurrently --kill-others --names api,mirror --prefix-colors cyan,magenta \"npm:api\" \"npm:mirror:watch\"",
+		"mirror:watch": "cd MagicMirror && npx nodemon --watch modules --watch config --ext js,css,njk --ignore config/basepath.js --exec \"node ./serveronly\"",
 		"mirror:check": "cd MagicMirror && node js/check_config.js",
-		"api": "python -m uvicorn api.main:app --port 8000",
-		"api:dev": "python -m uvicorn api.main:app --port 8000 --reload"
+		"api": ".venv/bin/python -m uvicorn api.main:app --port 8000",
+		"api:dev": ".venv/bin/python -m uvicorn api.main:app --port 8000 --reload"
+	},
+	"devDependencies": {
+		"concurrently": "^10.0.5"
 	}
 }
