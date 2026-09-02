@@ -1,6 +1,9 @@
 import json
+from datetime import datetime
 from typing import List
+from zoneinfo import ZoneInfo
 
+from openai import RateLimitError
 from pydantic import ValidationError
 
 from llm.lib.model import client, MODEL_NAME
@@ -8,6 +11,34 @@ from flow.schemas import MirrorAgentResponse
 from flow.tools import ACTION_TOOLS, EMIT_TOOL, run_tool
 
 MAX_TOOL_ROUNDS = 4
+
+# Matches flow/tools/calendar.py's default -- the model needs to reason about
+# "today"/"tomorrow"/"next Friday" in the same zone create_calendar_event
+# stamps events in, or a relative date it resolves can land on the wrong day.
+MIRROR_TIME_ZONE = "America/Los_Angeles"
+
+
+class AgentRateLimited(RuntimeError):
+    """Raised when the upstream LLM API rejects a request as rate-limited
+    (HTTP 429) -- i.e. too many requests in too short a window."""
+
+
+def _current_context() -> str:
+    """A fresh "what day/time is it" line, injected into the system prompt on
+    every turn (not baked in once at startup, since one agent stays alive for
+    days). Without this the model has no way to know the real date and
+    silently guesses one whenever asked for anything relative ("tomorrow",
+    "in an hour", "next Friday") -- so create_calendar_event gets called with
+    a plausible but wrong start_iso/end_iso: the event is created, just not on
+    any day the user is actually looking."""
+    now = datetime.now(ZoneInfo(MIRROR_TIME_ZONE))
+    return (
+        f"Current date and time: {now.strftime('%A, %B %d, %Y, %I:%M %p')} "
+        f"({MIRROR_TIME_ZONE}). Resolve relative dates and times ('tomorrow', "
+        "'next Friday', 'in an hour') against this, and always include the "
+        "correct year in start_iso/end_iso."
+    )
+
 
 SYSTEM_PROMPT = (
     "You are the voice assistant for a smart mirror. Keep spoken replies short, "
@@ -74,9 +105,13 @@ class MirrorAgent:
     """
 
     def __init__(self, system_prompt: str = SYSTEM_PROMPT):
+        self._base_prompt = system_prompt
         self.messages: List[dict] = [{"role": "system", "content": system_prompt}]
 
     def send(self, user_text: str) -> MirrorAgentResponse:
+        # Rewritten every turn, not just set once at construction, since one
+        # agent instance stays alive (and keeps taking turns) across days.
+        self.messages[0]["content"] = f"{self._base_prompt}\n\n{_current_context()}"
         self.messages.append({"role": "user", "content": user_text})
 
         for round_index in range(MAX_TOOL_ROUNDS + 1):
@@ -87,12 +122,15 @@ class MirrorAgent:
                 else "auto"
             )
 
-            response = client.chat.completions.create(
-                model=MODEL_NAME,
-                messages=self.messages,
-                tools=ACTION_TOOLS + [EMIT_TOOL],
-                tool_choice=tool_choice,
-            )
+            try:
+                response = client.chat.completions.create(
+                    model=MODEL_NAME,
+                    messages=self.messages,
+                    tools=ACTION_TOOLS + [EMIT_TOOL],
+                    tool_choice=tool_choice,
+                )
+            except RateLimitError as exc:
+                raise AgentRateLimited(str(exc)) from exc
             assistant_message = response.choices[0].message
             self.messages.append(_assistant_to_message(assistant_message))
 

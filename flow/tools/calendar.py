@@ -100,6 +100,24 @@ def list_upcoming_events(
     return events
 
 
+def _to_local_naive(value: str, tz: ZoneInfo) -> datetime:
+    """Parse an ISO 8601 datetime and return a naive wall-clock time in `tz`.
+
+    CALENDAR_TOOL tells the model to send a plain local timestamp with no UTC
+    offset, but if it slips and includes one anyway (e.g. a trailing "Z"),
+    Google treats that embedded offset as authoritative over the separate
+    `timeZone` field -- so trusting it here would silently land the event
+    hours away from the Pacific time actually intended. Converting explicitly
+    means every event ends up in `tz` regardless of what the model sent.
+    """
+    parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone(tz)
+    else:
+        parsed = parsed.replace(tzinfo=tz)
+    return parsed.replace(tzinfo=None)
+
+
 def create_calendar_event(
     summary: str,
     start_iso: str,
@@ -107,13 +125,24 @@ def create_calendar_event(
     description: str = "",
     time_zone: str = "America/Los_Angeles",
 ) -> str:
-    """Create an event on the user's primary Google Calendar. Returns the event link."""
+    """Create an event on the user's primary Google Calendar. Returns the event link.
+
+    `time_zone` isn't part of CALENDAR_TOOL's schema below, so the model
+    never chooses it -- every event this creates is pinned to Pacific time
+    (America/Los_Angeles, which is PST in winter and PDT in summer -- the
+    IANA zone, rather than a fixed UTC-8 offset, is what keeps this correct
+    across the daylight-saving switch instead of being right only half the
+    year) regardless of what start_iso/end_iso look like.
+    """
     service = _get_calendar_service()
+    tz = ZoneInfo(time_zone)
+    start_local = _to_local_naive(start_iso, tz)
+    end_local = _to_local_naive(end_iso, tz)
     event_body = {
         "summary": summary,
         "description": description,
-        "start": {"dateTime": start_iso, "timeZone": time_zone},
-        "end": {"dateTime": end_iso, "timeZone": time_zone},
+        "start": {"dateTime": start_local.isoformat(), "timeZone": time_zone},
+        "end": {"dateTime": end_local.isoformat(), "timeZone": time_zone},
     }
     created_event = (
         service.events().insert(calendarId="primary", body=event_body).execute()
@@ -135,11 +164,19 @@ CALENDAR_TOOL = {
                 },
                 "start_iso": {
                     "type": "string",
-                    "description": "Start datetime, ISO 8601 (YYYY-MM-DDTHH:MM:SS).",
+                    "description": (
+                        "Start datetime as local Pacific time, no UTC offset or "
+                        "'Z' suffix (YYYY-MM-DDTHH:MM:SS) -- every event is "
+                        "scheduled in Pacific time regardless, so an offset "
+                        "here would just be misleading."
+                    ),
                 },
                 "end_iso": {
                     "type": "string",
-                    "description": "End datetime, ISO 8601 (YYYY-MM-DDTHH:MM:SS).",
+                    "description": (
+                        "End datetime as local Pacific time, no UTC offset or "
+                        "'Z' suffix (YYYY-MM-DDTHH:MM:SS)."
+                    ),
                 },
                 "description": {
                     "type": "string",

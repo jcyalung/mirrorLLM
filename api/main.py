@@ -19,8 +19,8 @@ from fastapi import BackgroundTasks, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
 
-from api import listen
-from flow.agent import MirrorAgent
+from api import gpio_button, listen, state
+from flow.agent import AgentRateLimited, MirrorAgent
 from flow.schemas import MirrorAgentResponse
 from flow.tools.calendar import CalendarNotAuthorized, list_upcoming_events
 from flow.tools.spotify import (
@@ -32,6 +32,39 @@ from flow.voice import speak
 from llm.lib.model import MODEL_NAME
 
 log = logging.getLogger("api")
+# Nothing in this codebase calls logging.basicConfig, so "api" has no handler
+# of its own -- INFO records would otherwise vanish silently (only WARNING+
+# reaches Python's stderr fallback handler). voice_events (below) needs INFO
+# to actually show, so give this logger its own handler explicitly.
+log.setLevel(logging.INFO)
+if not log.handlers:
+    handler = logging.StreamHandler()
+    handler.setFormatter(logging.Formatter("%(levelname)s:%(name)s: %(message)s"))
+    log.addHandler(handler)
+
+
+_NOISY_POLL_PATHS = (
+    # Polled by the chat module every `pollInterval` ms; voice_events below
+    # logs in its place, but only when a poll actually turns up a new event.
+    "/voice/events",
+    # Polled by the spotify module every `fetchInterval` ms (default 1s);
+    # there's no "new" now-playing state worth calling out the way a voice
+    # event is, so this one is just dropped outright.
+    "/spotify/now-playing",
+)
+
+
+class _NoisyPollFilter(logging.Filter):
+    """Drops uvicorn's access-log line for the front end's steady polling
+    endpoints -- left alone they fire every second or faster regardless of
+    whether anything happened, drowning out everything else in the log."""
+
+    def filter(self, record: logging.LogRecord) -> bool:
+        message = record.getMessage()
+        return not any(path in message for path in _NOISY_POLL_PATHS)
+
+
+logging.getLogger("uvicorn.access").addFilter(_NoisyPollFilter())
 
 app = FastAPI(title="mirrorLLM agent API", version="1.0.0")
 
@@ -90,12 +123,22 @@ def _speak_safely(text: str) -> None:
             log.warning("TTS playback failed: %s", exc)
 
 
-def _run_turn(prompt: str, say: bool, background: BackgroundTasks) -> MirrorAgentResponse:
+def _agent_turn(prompt: str) -> MirrorAgentResponse:
+    """Run one turn through the shared agent. Shared with the GPIO button flow
+    (api/gpio_button.py) so both paths go through the same lock and history."""
     with _agent_lock:
-        try:
-            result = _agent.send(prompt)
-        except Exception as exc:
-            raise HTTPException(status_code=502, detail=f"agent failed: {exc}") from exc
+        return _agent.send(prompt)
+
+
+def _run_turn(prompt: str, say: bool, background: BackgroundTasks) -> MirrorAgentResponse:
+    try:
+        result = _agent_turn(prompt)
+    except AgentRateLimited as exc:
+        raise HTTPException(
+            status_code=429, detail=f"too many requests, try again shortly: {exc}"
+        ) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"agent failed: {exc}") from exc
 
     # Speak after responding, so the mirror can render the card immediately
     # instead of waiting out the audio.
@@ -103,6 +146,11 @@ def _run_turn(prompt: str, say: bool, background: BackgroundTasks) -> MirrorAgen
         background.add_task(_speak_safely, result.voice_response)
 
     return result
+
+
+# The GPIO button flow (and its dev-machine stand-in, POST /voice/press)
+# reuses the same agent turn and TTS lock as the HTTP endpoints above.
+gpio_button.start(agent_turn=_agent_turn, speak_safely=_speak_safely)
 
 
 @app.get("/calendar/events")
@@ -134,6 +182,7 @@ def health():
         "model": MODEL_NAME,
         "turns": sum(1 for m in _agent.messages if m.get("role") == "user"),
         "stt_loaded": listen.is_loaded(),
+        "button_armed": gpio_button.is_armed(),
     }
 
 
@@ -158,11 +207,45 @@ def voice_devices():
     return {"devices": listen.list_devices()}
 
 
+@app.get("/voice/events")
+def voice_events(since: int = 0):
+    """Events from the GPIO button flow, for the mirror module to poll.
+
+    Types: listening_start, listening_stop, user_message ({text}),
+    assistant_thinking, assistant_message ({text, display_card}), turn_idle,
+    calendar_updated ({html_link}). Pass the highest `id` seen so far as
+    `since` to get only what's new.
+    """
+    events = state.since(since)
+    if events:
+        log.info("voice/events: %d new event(s) since id %d", len(events), since)
+    return {"events": events}
+
+
+@app.post("/voice/press")
+def voice_press():
+    """Simulate a physical button press.
+
+    Runs the exact same chime/listen/cancel state machine as the real GPIO
+    button (api/gpio_button.py), so this is how the flow gets exercised on a
+    dev machine with no button wired up. A press while a turn is already
+    listening stops that recording early, same as a real second press.
+    """
+    outcome = gpio_button.press()
+    if outcome is None:
+        raise HTTPException(status_code=503, detail="button flow not initialized")
+    if outcome == "busy":
+        raise HTTPException(status_code=409, detail="already thinking or speaking")
+    return {"status": outcome}
+
+
 @app.post("/voice/turn", response_model=TurnResponse)
 def voice_turn(req: ListenRequest, background: BackgroundTasks):
     """Record one utterance, transcribe it, and run it through the agent.
 
-    This is what the GPIO button will call.
+    A fixed-timeout, non-interruptible capture for scripted/manual use. The
+    GPIO button (api/gpio_button.py) uses `listen.listen_interruptible`
+    instead, so a second press can cut the recording short.
     """
     try:
         transcript = listen.transcribe_once(

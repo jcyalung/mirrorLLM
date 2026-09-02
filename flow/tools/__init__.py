@@ -1,5 +1,6 @@
 import json
 
+from api import state
 from llm.lib.web import TOOLS as _WEB_TOOLS, run_tool as _run_web_tool
 
 from flow.tools.calendar import CALENDAR_TOOL, create_calendar_event
@@ -95,6 +96,10 @@ def run_tool(name: str, arguments: dict) -> str:
             return _run_web_tool(name, arguments)
         if name == "create_calendar_event":
             link = create_calendar_event(**arguments)
+            # The gcalendar module otherwise only refetches on its own 3-minute
+            # timer, so a freshly created event could sit invisible on the
+            # mirror for a while -- nudge it to refresh right away instead.
+            state.emit("calendar_updated", {"html_link": link})
             return json.dumps({"status": "created", "html_link": link})
         if name == "notify_discord":
             return json.dumps(notify_discord(arguments["message"]))
