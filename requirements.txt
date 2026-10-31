@@ -39,3 +39,12 @@ numpy
 #   Debian/Pi:    sudo apt install portaudio19-dev
 # Text-only use of the API works without it.
 PyAudio
+
+# --- GPIO push-to-talk button (api/gpio_button.py) ---
+# gpiozero installs fine anywhere; without a real GPIO chip underneath, the
+# button just fails to arm and the app falls back to POST /voice/press.
+# lgpio is gpiozero's pin factory for the Pi 5's RP1 GPIO chip (older Pis use
+# RPi.GPIO instead, which gpiozero already depends on) -- Linux-only, so it's
+# skipped on a Windows/macOS dev machine.
+gpiozero
+lgpio; sys_platform == "linux"

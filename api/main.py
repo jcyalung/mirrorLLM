@@ -259,6 +259,7 @@ def voice_turn(req: ListenRequest, background: BackgroundTasks):
     if not transcript:
         raise HTTPException(status_code=422, detail="no speech detected")
 
+    log.info("transcript: %r", transcript)
     return TurnResponse(
         transcript=transcript,
         response=_run_turn(transcript, req.speak, background),

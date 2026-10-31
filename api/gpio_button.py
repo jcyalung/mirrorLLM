@@ -120,6 +120,7 @@ class ButtonFlow:
                 state.emit("turn_idle")
                 return
 
+            log.info("transcript: %r", transcript)
             state.emit("user_message", {"text": transcript})
 
             with self._status_lock:
